@@ -1,14 +1,11 @@
 "use client";
 
 import Head from "next/head";
-import { useState } from "react";
 import Footer from "./Components/Footer";
 import Recommender from "./Components/Recommender";
 import EngineStarter from "./Components/EngineStarter";
 
 export default function Home() {
-  const [engineReady, setEngineReady] = useState(false);
-
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
       <Head>
@@ -43,12 +40,12 @@ export default function Home() {
               🚀 Wake up the backend engine
             </h2>
             <p className="text-sm text-gray-500">
-              The AI engine runs on Render's free tier and may be sleeping.
+              The AI engine runs on Render&apos;s free tier and may be sleeping.
               Click the button to wake it up before using the recommender.
             </p>
           </div>
           <div className="flex-shrink-0">
-            <EngineStarter onReady={() => setEngineReady(true)} />
+            <EngineStarter />
           </div>
         </div>
       </div>
