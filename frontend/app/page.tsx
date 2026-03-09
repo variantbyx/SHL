@@ -1,16 +1,22 @@
-"use client"
+"use client";
 
-import Head from 'next/head';
-import Footer from './Components/Footer';
-import Recommender from './Components/Recommender';
-
+import Head from "next/head";
+import { useState } from "react";
+import Footer from "./Components/Footer";
+import Recommender from "./Components/Recommender";
+import EngineStarter from "./Components/EngineStarter";
 
 export default function Home() {
+  const [engineReady, setEngineReady] = useState(false);
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
       <Head>
         <title>SHL AI Assessment Recommender</title>
-        <meta name="description" content="Intelligent SHL assessment recommendations powered by AI" />
+        <meta
+          name="description"
+          content="Intelligent SHL assessment recommendations powered by AI"
+        />
         <link rel="icon" href="/favicon.ico" />
       </Head>
 
@@ -29,10 +35,28 @@ export default function Home() {
         </div>
       </header>
 
-      {/* Main Content */}
-      <Recommender/>
+      {/* Engine Start Banner */}
+      <div className="max-w-6xl mx-auto px-4 pt-10 pb-2">
+        <div className="bg-white rounded-xl shadow-md p-6 flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex-1">
+            <h2 className="text-lg font-semibold text-gray-800 mb-1">
+              🚀 Wake up the backend engine
+            </h2>
+            <p className="text-sm text-gray-500">
+              The AI engine runs on Render's free tier and may be sleeping.
+              Click the button to wake it up before using the recommender.
+            </p>
+          </div>
+          <div className="flex-shrink-0">
+            <EngineStarter onReady={() => setEngineReady(true)} />
+          </div>
+        </div>
+      </div>
 
-      <Footer/>
+      {/* Main Content — always visible so user can read while engine warms up */}
+      <Recommender />
+
+      <Footer />
     </div>
   );
 }
