@@ -1,1 +1,11 @@
--r shl_recommender/requirements.txt
+fastapi
+uvicorn
+sentence-transformers
+scikit-learn
+rank-bm25
+pydantic
+requests
+beautifulsoup4
+pandas
+openpyxl
+gunicorn

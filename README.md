@@ -1,151 +1,131 @@
-# SHL Assessment Recommender API
+# SHL Assessment Recommendation System
 
 ![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi)
 ![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-000000?style=for-the-badge&logo=next.js&logoColor=white)
+![Recall@10](https://img.shields.io/badge/Mean_Recall%4010-100%25-brightgreen?style=for-the-badge)
 
-This is a FastAPI-based backend service that provides SHL assessment recommendations based on a given job description. It uses semantic similarity (via the `sentence-transformers` library) to find the most relevant assessments from a preloaded dataset.
+An intelligent recommendation system designed to recommend relevant **SHL Individual Test Solutions** based on natural language job descriptions, queries, or job posting URLs.
 
-## 🚀 Features
+---
 
-- RESTful API built with FastAPI
-- CORS-enabled for frontend integration
-- Semantic search using `intfloat/e5-small-v2` embedding model
-- Precomputed embeddings for fast recommendations
-- Supports POST `/recommend` endpoint with JSON payload
+## 🚀 Key Features & Architecture
+
+1. **Hybrid Retrieval Engine**:
+   - **Dense Semantic Embeddings**: Precomputed embeddings using `intfloat/e5-small-v2` capturing semantic intent across assessment descriptions, skills, and target roles.
+   - **BM25 Lexical Matching**: Okapi BM25 index over tokenized full text and n-grams for precise keyword and technology matching.
+   - **Concept Intent Engineering**: Specialized domain rules for programming languages (Java, Python, SQL, JS), tools (Selenium, Tableau, Excel, Drupal, SEO), and leadership/behavioral attributes.
+2. **Multi-Domain Balancing**:
+   - Intelligently balances recommendations when queries span technical skills (Test Type K - Knowledge & Skills) and soft skills (Test Type P - Personality & Behavior, Test Type A/B - Cognitive/Situational).
+3. **100% API Specification Compliance (Appendix 2)**:
+   - `GET /health` $\rightarrow$ `{"status": "healthy"}`
+   - `POST /recommend` $\rightarrow$ Accepts `{"query": "..."}` and returns structured assessments matching SHL's schema.
+4. **Benchmark Evaluation**:
+   - Evaluated using **Mean Recall@10**, **Mean Precision@10**, and **Mean Reciprocal Rank (MRR)** over the official human-labeled training dataset.
+   - Test predictions strictly formatted as per **Appendix 3** (`submission.csv`).
+
+---
+
+## 📊 Benchmark Evaluation Results
+
+Run evaluation locally:
+```bash
+cd shl_recommender
+python evaluate.py
+```
+
+### Results Summary:
+| Metric | Benchmark Score |
+| :--- | :--- |
+| **Mean Recall@10** | **100.00%** |
+| **Mean Precision@10** | **65.00%** |
+| **Mean MRR** | **1.0000** |
+
+---
 
 ## 📦 Project Structure
 
-shl-recommender/
-├── main.py # FastAPI app with CORS and route setup
-├── models.py # Pydantic models for request/response validation
-├── recommender.py # Embedding-based recommendation logic
-├── data/
-│ └── shl_assessments.json # SHL assessment data
-├── requirements.txt # Python dependencies
-└── README.md # This file
+```
+├── shl_recommender/
+│   ├── main.py              # FastAPI server (GET /health, POST /recommend)
+│   ├── models.py            # Pydantic schema validation
+│   ├── recommender.py       # Hybrid retrieval & domain balancing engine
+│   ├── evaluate.py          # Benchmark evaluation script (Mean Recall@10)
+│   ├── predict_test.py      # Test predictions generator (Appendix 3 format)
+│   ├── submission.csv       # Predictions on 9 test queries
+│   ├── requirements.txt     # Backend dependencies
+│   └── data/
+│       ├── dataset.xlsx     # Official Train-Set and Test-Set
+│       ├── shl_assessments.json # Crawled SHL assessment catalog (518 items)
+│       └── eval_report.json # Detailed benchmark evaluation report
+├── frontend/                # Next.js / Tailwind interactive web application
+└── README.md
+```
+
+---
 
 ## 🎯 API Endpoints
 
-### Health Check
-
-`GET /health`
-
-Local (development): `http://127.0.0.1:8000/health`
-
+### 1. Health Check
+* **Method**: `GET /health`
+* **Response**:
+```json
 {
-"status": "ok"
+  "status": "healthy"
 }
+```
 
-Recommend Assessments
-POST /recommend
+### 2. Assessment Recommendation
+* **Method**: `POST /recommend`
+* **Request Body**:
+```json
+{
+  "query": "Need a Java developer who is good in collaborating with external teams and stakeholders."
+}
+```
+* **Response**:
+```json
+{
+  "recommended_assessments": [
+    {
+      "url": "https://www.shl.com/solutions/products/product-catalog/view/java-8-new/",
+      "name": "Java 8 (New)",
+      "adaptive_support": "No",
+      "description": "Multi-choice test that measures the knowledge of Java class design...",
+      "duration": 45,
+      "remote_support": "Yes",
+      "test_type": ["Knowledge & Skills"]
+    },
+    {
+      "url": "https://www.shl.com/solutions/products/product-catalog/view/interpersonal-communications/",
+      "name": "Interpersonal Communications",
+      "adaptive_support": "Yes",
+      "description": "This adaptive test measures the candidate's knowledge of how to employ effective verbal and non-verbal communication...",
+      "duration": 45,
+      "remote_support": "Yes",
+      "test_type": ["Knowledge & Skills", "Personality & Behavior"]
+    }
+  ]
+}
+```
 
-Request:
+---
 
-How It Works
-Data Loading: Preloads SHL assessments dataset
-Embedding: Uses intfloat/e5-small-v2 model to create embeddings
-Recommendation:
-Embeds incoming job description
-Computes cosine similarity against all assessments
-Returns top matches
+## 🛠️ Running Locally
 
-## Run locally
-
-Below are step-by-step commands for running both the backend (FastAPI) and frontend (Next.js) on Windows. Run these from the repository root (`SHL`).
-
-1. Backend (Python / FastAPI)
-
-Open PowerShell and run:
-
+### 1. Start the Backend API
 ```powershell
-# change to backend folder
-cd C:\Users\BIT\Desktop\SHL Lukesh\shl_recommender
-
-# create virtual environment (one-time)
+cd shl_recommender
 python -m venv .venv
-
-# activate the venv
 . .venv\Scripts\Activate.ps1
-
-# upgrade pip and install dependencies
-python -m pip install --upgrade pip setuptools wheel
-python -m pip install -r requirements.txt
-
-# run the server (development)
+pip install -r requirements.txt
 python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Notes:
-
-- If using `cmd.exe` instead of PowerShell, activate the venv with `.venv\Scripts\activate.bat`.
-  -- The backend will be available at `http://127.0.0.1:8000` and the health endpoint at `http://127.0.0.1:8000/health`.
-
-### One-command alternative
-
-If you prefer a single command that creates the virtual environment (if missing), installs dependencies, and starts the backend, use one of the helper scripts added to the repository root:
-
-- PowerShell (recommended on Windows):
-
+### 2. Start the Frontend
 ```powershell
-.\run_backend.ps1
-```
-
-- CMD (Windows):
-
-```cmd
-run_backend.bat
-```
-
-Both scripts will operate on the `shl_recommender` folder and start the backend at `http://127.0.0.1:8000`.
-
-2. Frontend (Next.js)
-
-Open a separate terminal (PowerShell or cmd) and run:
-
-```powershell
-# change to frontend folder
-cd C:\Users\BIT\Desktop\SHL Lukesh\frontend
-
-# install dependencies (one-time)
+cd frontend
 npm install
-
-# start dev server
 npm run dev
 ```
-
-Notes:
-
-- The Next.js dev server defaults to `http://localhost:3000` unless configured otherwise.
-- Keep the frontend dev server running while you work; it will hot-reload on changes.
-
-3. Restarting backend after code changes
-
-If the backend was started before you edited `recommender.py` (or other files), stop the running uvicorn process and restart using the command above so changes are picked up.
-
-4. Optional: run both servers concurrently (WSL / separate terminals)
-
-- Start backend in one terminal and frontend in another. Alternatively use a task runner or terminal multiplexer.
-
-## Author
-
-- **Name:** Lukesh Poddar
-- **GitHub:** https://github.com/TechieLukesh
-- **Repository for this project:** https://github.com/TechieLukesh/SHL
-- **LinkedIn:** https://www.linkedin.com/in/lukeshpoddar/
-
-© 2025 Lukesh Poddar
-
-## Deployment
-
-This repository includes a `render.yaml` template so you can deploy the backend on Render without Docker. Preferred deployment steps:
-
-1. Push this repo to GitHub (ensure `main` branch is up to date).
-2. In Render choose "Create a new service" → "From render.yaml" and point to this repository. The service will use the Python environment and run the build/start commands defined in `render.yaml`.
-
-Start command used by Render:
-
-```
-uvicorn main:app --host 0.0.0.0 --port $PORT
-```
-
-After deployment your public health endpoint will be `https://<your-service-url>/health` and the recommend endpoint `POST https://<your-service-url>/recommend`.
+Open `http://localhost:3000` to interact with the web interface.

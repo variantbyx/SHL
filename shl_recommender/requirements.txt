@@ -2,10 +2,10 @@ fastapi
 uvicorn
 sentence-transformers
 scikit-learn
+rank-bm25
 pydantic
-Flask
-gunicorn
 requests
 beautifulsoup4
 pandas
 openpyxl
+gunicorn

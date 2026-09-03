@@ -1,32 +1,24 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional, Any
 
 
 class RecommendationRequest(BaseModel):
-    job_description: Optional[str] = None
-    url: Optional[str] = None
-    top_k: Optional[int] = 10
-    # Optional flags to control recommendation behavior
-    balanced: Optional[bool] = False
-    exclude_prepackaged: Optional[bool] = False
-    # Optional tuning parameters (dev use)
-    w_skill: Optional[float] = None
-    w_embed: Optional[float] = None
-    w_diff: Optional[float] = None
-    prefer_ratio: Optional[float] = None
+    query: Optional[str] = Field(None, description="Natural language query or job description text")
+    job_description: Optional[str] = Field(None, description="Job description text (alias for query)")
+    url: Optional[str] = Field(None, description="Optional URL to scrape job description from")
+    top_k: Optional[int] = Field(10, ge=1, le=10, description="Number of recommendations (1 to 10)")
+    balanced: Optional[bool] = Field(False, description="Whether to balance technical and soft skills")
+    exclude_prepackaged: Optional[bool] = Field(False, description="Whether to exclude prepackaged job solutions")
 
 
 class Assessment(BaseModel):
-    # make fields optional to tolerate variable catalog entries
-    assessment_id: Optional[str] = None
-    url: Optional[str] = None
-    adaptive_support: Optional[Any] = None
-    description: Optional[str] = None
-    duration: Optional[Any] = None
-    remote_support: Optional[Any] = None
-    test_type: Optional[List[str]] = None
-    score: Optional[float] = None
-    skills: Optional[List[str]] = None
+    url: str = Field(..., description="Valid URL to the assessment resource in SHL catalog")
+    name: str = Field(..., description="Name of the assessment")
+    adaptive_support: str = Field("No", description="Either 'Yes' or 'No' indicating if assessment supports adaptive testing")
+    description: str = Field("", description="Detailed description of the assessment")
+    duration: Optional[int] = Field(None, description="Duration of the assessment in minutes")
+    remote_support: str = Field("Yes", description="Either 'Yes' or 'No' indicating if assessment can be taken remotely")
+    test_type: List[str] = Field(default_factory=list, description="Categories or types of the assessment")
 
 
 class RecommendationResponse(BaseModel):

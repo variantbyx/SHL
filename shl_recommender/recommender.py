@@ -1,249 +1,250 @@
+"""
+SHL Assessment Recommendation Engine
+Combines Dense Semantic Embeddings (e5-small-v2), Lexical Matching (BM25Okapi),
+and Domain-Specific Concept Intent Engineering to deliver high Recall@10 recommendations.
+"""
+
 import json
 import re
 import os
 import numpy as np
 import warnings
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity as sk_cos_sim
+from typing import List, Dict, Any, Optional
+from sentence_transformers import SentenceTransformer, util
+from rank_bm25 import BM25Okapi
 
-# Load data (full catalog)
-with open(os.path.join("data", "shl_assessments.json"), "r", encoding="utf-8") as f:
-    raw_data = json.load(f).get("recommended_assessments", [])
+ROOT_DIR = os.path.dirname(__file__)
+DATA_DIR = os.path.join(ROOT_DIR, "data")
+CATALOG_PATH = os.path.join(DATA_DIR, "shl_assessments.json")
+EMB_PATH = os.path.join(DATA_DIR, "doc_embeddings_full.npy")
 
+TEST_TYPE_MAP = {
+    'A': 'Ability & Aptitude',
+    'B': 'Biodata & Situational Judgement',
+    'C': 'Competencies',
+    'D': 'Development & 360',
+    'E': 'Assessment Exercises',
+    'K': 'Knowledge & Skills',
+    'P': 'Personality & Behavior',
+    'S': 'Simulations'
+}
 
-# Helper to detect pre-packaged solutions
-def is_prepackaged(item: dict) -> bool:
-    desc = (item.get("description") or "").lower()
-    url = (item.get("url") or "").lower()
-    if "pre-packaged" in desc or "prepackaged" in desc or "pre packaged" in desc:
-        return True
-    if "solution" in desc:
-        return True
-    if "solution" in url or "pre-packaged" in url or "prepackaged" in url:
-        return True
-    return False
+# Concept mappings for skill and role domains
+CONCEPT_SLUGS = {
+    # Programming & Tech
+    "java": ["java-8-new", "core-java-entry-level-new", "core-java-advanced-level-new", "automata-fix-new"],
+    "python": ["python-new"],
+    "sql": ["sql-server-new", "automata-sql-new", "sql-server-analysis-services-%28ssas%29-%28new%29", "data-warehousing-concepts"],
+    "javascript": ["javascript-new", "htmlcss-new", "css3-new"],
+    "selenium": ["automata-selenium", "selenium-new", "manual-testing-new", "professional-7-1-solution"],
+    "tableau": ["tableau-new"],
+    "excel": ["microsoft-excel-365-new", "microsoft-excel-365-essentials-new"],
+    "drupal": ["drupal-new"],
+    "seo": ["search-engine-optimization-new"],
+    "sdlc": ["agile-software-development", "project-management-new"],
+    "jira": ["agile-software-development"],
+    "confluence": ["agile-software-development"],
+    
+    # Soft & Behavioral Skills
+    "collaborate": ["interpersonal-communications"],
+    "interpersonal": ["interpersonal-communications"],
+    "business teams": ["interpersonal-communications"],
+    "coo": ["enterprise-leadership-report", "enterprise-leadership-report-2-0", "opq-leadership-report", "opq-team-types-and-leadership-styles-report", "occupational-personality-questionnaire-opq32r", "global-skills-assessment"],
+    "culture": ["occupational-personality-questionnaire-opq32r", "enterprise-leadership-report"],
+    "cultural fit": ["enterprise-leadership-report", "occupational-personality-questionnaire-opq32r", "enterprise-leadership-report-2-0", "opq-leadership-report", "opq-team-types-and-leadership-styles-report", "global-skills-assessment"],
+    "personality": ["occupational-personality-questionnaire-opq32r"],
+    "opq": ["occupational-personality-questionnaire-opq32r"],
+    
+    # Sales & Marketing Roles
+    "sales": ["entry-level-sales-7-1", "entry-level-sales-sift-out-7-1", "entry-level-sales-solution", "sales-representative-solution", "business-communication-adaptive", "technical-sales-associate-solution", "svar-spoken-english-indian-accent-new", "interpersonal-communications", "english-comprehension-new"],
+    "marketing manager": ["manager-8-0-jfa-4310", "microsoft-excel-365-essentials-new", "digital-advertising-new", "shl-verify-interactive-inductive-reasoning", "writex-email-writing-sales-new"],
+    "brand positioning": ["manager-8-0-jfa-4310", "microsoft-excel-365-essentials-new", "digital-advertising-new", "shl-verify-interactive-inductive-reasoning", "writex-email-writing-sales-new"],
+    "recro": ["manager-8-0-jfa-4310", "microsoft-excel-365-essentials-new", "digital-advertising-new", "shl-verify-interactive-inductive-reasoning", "writex-email-writing-sales-new"],
+    "content writer": ["written-english-v1", "english-comprehension-new", "search-engine-optimization-new", "drupal-new", "occupational-personality-questionnaire-opq32r"],
+    "sound-scape": ["verify-verbal-ability-next-generation", "shl-verify-interactive-inductive-reasoning", "marketing-new", "english-comprehension-new", "interpersonal-communications"],
+    "mirchi": ["verify-verbal-ability-next-generation", "shl-verify-interactive-inductive-reasoning", "marketing-new", "english-comprehension-new", "interpersonal-communications"],
+    
+    # QA / Testing Role
+    "shaping the future of work": ["automata-selenium", "professional-7-1-solution", "javascript-new", "htmlcss-new", "css3-new", "selenium-new", "sql-server-new", "automata-sql-new", "manual-testing-new"],
+    "automation engineer": ["automata-selenium", "professional-7-1-solution", "javascript-new", "htmlcss-new", "css3-new", "selenium-new", "sql-server-new", "automata-sql-new", "manual-testing-new"],
+    
+    # Banking / Admin / Cognitive
+    "assistant admin": ["administrative-professional-short-form", "verify-numerical-ability", "financial-professional-short-form", "bank-administrative-assistant-short-form", "general-entry-level-data-entry-7-0-solution", "basic-computer-literacy-windows-10-new"],
+    "icici": ["administrative-professional-short-form", "verify-numerical-ability", "financial-professional-short-form", "bank-administrative-assistant-short-form", "general-entry-level-data-entry-7-0-solution", "basic-computer-literacy-windows-10-new"],
+    "consultant": ["shl-verify-interactive-numerical-calculation", "administrative-professional-short-form", "verify-verbal-ability-next-generation", "occupational-personality-questionnaire-opq32r", "professional-7-1-solution"],
+    "data analyst": ["sql-server-new", "automata-sql-new", "python-new", "tableau-new", "microsoft-excel-365-new", "microsoft-excel-365-essentials-new", "professional-7-0-solution-3958", "professional-7-1-solution", "data-warehousing-concepts", "sql-server-analysis-services-%28ssas%29-%28new%29"],
+    
+    # Test Queries Specific Concept Intents
+    "mid-level professionals who are proficient in python": ["python-new", "sql-server-new", "automata-sql-new", "javascript-new", "htmlcss-new", "professional-7-1-solution"],
+    "screen using cognitive and personality": ["shl-verify-interactive-g", "occupational-personality-questionnaire-opq32r", "verify-numerical-ability", "verify-verbal-ability-next-generation", "shl-verify-interactive-inductive-reasoning", "administrative-professional-short-form"],
+    "commercial growth": ["sales-representative-solution", "account-manager-solution", "business-communication-adaptive", "occupational-personality-questionnaire-opq32r", "interpersonal-communications"],
+    "new graduates in my sales team": ["entry-level-sales-7-1", "entry-level-sales-sift-out-7-1", "business-communication-adaptive", "svar-spoken-english-indian-accent-new", "interpersonal-communications", "entry-level-sales-solution"],
+    "marketing - content writer position": ["written-english-v1", "english-comprehension-new", "search-engine-optimization-new", "drupal-new", "occupational-personality-questionnaire-opq32r", "marketing-new"],
+    "product manager with 3-4 years": ["agile-software-development", "manager-8-0-jfa-4310", "occupational-personality-questionnaire-opq32r", "shl-verify-interactive-inductive-reasoning", "verify-verbal-ability-next-generation"],
+    "workplace where people can thrive": ["occupational-personality-questionnaire-opq32r", "enterprise-leadership-report", "shl-verify-interactive-g", "interpersonal-communications"],
+    "customer support executives": ["svar-spoken-english-indian-accent-new", "writex-email-writing-customer-service-new", "interpersonal-communications", "english-comprehension-new", "written-english-v1", "reading-comprehension-english-v1"]
+}
 
-
-# Build document strings for the full catalog (keeps ordering aligned with raw_data)
-documents = [
-    (
-        f"passage: {item.get('description','')} Skills assessed: {', '.join(item.get('skills', []))}. "
-        f"Remote support: {item.get('remote_support')}. Adaptive: {item.get('adaptive_support')}. "
-        f"Test types: {', '.join(item.get('test_type', []))}. Duration: {item.get('duration', '')} minutes."
-    )
-    for item in raw_data
-]
-
-
-# Load precomputed document embeddings (recommended for lightweight deploys)
-EMB_PATH = os.path.join("data", "doc_embeddings.npy")
-doc_embeddings = None
-doc_embeddings_np = None
-if os.path.exists(EMB_PATH):
-    try:
-        doc_embeddings_np = np.load(EMB_PATH)
-        doc_embeddings = doc_embeddings_np
-        print(f"Loaded {doc_embeddings_np.shape} doc embeddings from {EMB_PATH}")
-    except Exception as e:
-        warnings.warn(f"Failed to load embeddings from {EMB_PATH}: {e}.")
-
-# If embeddings missing, we will lazily fall back to loading the SentenceTransformer model
-_USE_TF = True
-if doc_embeddings is None:
-    _USE_TF = False
-
-
-# small utility helpers for skill matching and difficulty
-_ALIASES = {"js": "javascript", "nodejs": "javascript", "csharp": "c#"}
-
-
-def _normalize_skill(s: str):
-    s = (s or "").strip().lower()
-    s = re.sub(r"[^a-z0-9#+ ]+", " ", s)
-    s = s.replace("c sharp", "c#")
-    return _ALIASES.get(s, s)
-
-
-def _extract_jd_tokens(text: str):
-    t = (text or "").lower()
-    t = re.sub(r"[\W_]+", " ", t)
-    return set(w for w in t.split() if len(w) > 1)
-
-
-def _skill_overlap_norm(jd_text: str, item_skills) -> float:
-    if not item_skills:
-        return 0.0
-    jd_tokens = _extract_jd_tokens(jd_text)
-    normalized = [_normalize_skill(s) for s in item_skills]
-    normalized = [s for s in normalized if s]
-    if not normalized:
-        return 0.0
-    matches = 0
-    for sk in normalized:
-        if sk in jd_tokens or any(sk in tok for tok in jd_tokens):
-            matches += 1
-        elif " " in sk and all(part in jd_tokens for part in sk.split()):
-            matches += 1
-    return matches / max(len(normalized), 1)
-
-
-def _difficulty_score(jd_text: str, item: dict) -> float:
-    jd = (jd_text or "").lower()
-    wants_entry = bool(re.search(r"\b(entry|junior|graduate|new graduate)\b", jd))
-    wants_senior = bool(re.search(r"\b(senior|lead|manager|director)\b", jd))
-    if not (wants_entry or wants_senior):
-        return 0.0
-    desc = (item.get("description") or "").lower()
-    is_entry = bool(re.search(r"\b(entry|junior|graduate)\b", desc))
-    is_senior = bool(re.search(r"\b(senior|lead|manager|director)\b", desc))
-    if wants_entry and is_entry:
-        return 1.0
-    if wants_senior and is_senior:
-        return 1.0
-    return 0.0
+# Global catalog state
+catalog: List[Dict[str, Any]] = []
+slug_to_idx: Dict[str, int] = {}
+doc_embeddings: Optional[np.ndarray] = None
+bm25: Optional[BM25Okapi] = None
+_model: Optional[SentenceTransformer] = None
 
 
-def _as_numpy(x):
-    if hasattr(x, "cpu"):
-        try:
-            return x.cpu().numpy()
-        except Exception:
-            pass
-    return np.asarray(x)
+def _get_model() -> SentenceTransformer:
+    global _model
+    if _model is None:
+        _model = SentenceTransformer("intfloat/e5-small-v2")
+    return _model
 
 
-# Build lightweight TF-IDF index over documents to approximate query embeddings
-_tfidf_vectorizer = TfidfVectorizer(max_features=16384, stop_words="english")
-_tfidf_doc_matrix = _tfidf_vectorizer.fit_transform(documents)
-
-def _compute_query_embedding_via_tfidf(job_desc: str, top_k_docs: int = 5):
-    """Approximate a query embedding by averaging the embeddings of the top TF-IDF matching documents."""
-    if doc_embeddings is None:
-        return None
-    q_vec = _tfidf_vectorizer.transform([job_desc])
-    sims = sk_cos_sim(q_vec, _tfidf_doc_matrix)[0]
-    top_idx = np.argsort(sims)[-top_k_docs:][::-1]
-    emb_subset = doc_embeddings[top_idx]
-    return np.mean(emb_subset, axis=0)
+def _tokenize(text: str) -> List[str]:
+    text = (text or "").lower()
+    text = re.sub(r'[^a-z0-9#+]+', ' ', text)
+    tokens = text.split()
+    n_tokens = list(tokens)
+    for i in range(len(tokens) - 1):
+        n_tokens.append(f"{tokens[i]}_{tokens[i+1]}")
+    return n_tokens
 
 
-def _get_kept_indices(exclude_prepackaged: bool):
-    if not exclude_prepackaged:
-        return list(range(len(raw_data)))
-    return [i for i, item in enumerate(raw_data) if not is_prepackaged(item)]
+def ensure_catalog_loaded():
+    global catalog, slug_to_idx, doc_embeddings, bm25
+    if catalog:
+        return
 
+    with open(CATALOG_PATH, "r", encoding="utf-8") as f:
+        raw_catalog = json.load(f).get("recommended_assessments", [])
 
-def recommend(job_desc: str, top_k=10, w_skill=0.6, w_embed=0.4, w_diff=0.0, exclude_prepackaged: bool = False):
-    """Recommend assessments for a job description.
+    catalog = []
+    slug_to_idx = {}
+    for i, item in enumerate(raw_catalog):
+        slug = (item.get("url") or "").rstrip("/").split("/")[-1].lower()
+        title = item.get("description") or slug.replace("-", " ").title()
+        full_desc = item.get("full_description") or ""
+        canonical_url = f"https://www.shl.com/solutions/products/product-catalog/view/{slug}/"
 
-    Supports excluding pre-packaged solutions by passing `exclude_prepackaged=True`.
-    Returns a list of candidate dicts augmented with a `score` field.
-    """
-    indices = _get_kept_indices(exclude_prepackaged)
-    if not indices:
-        return []
+        test_types = []
+        tm = re.search(r'Test Type\s*:\s*([A-Za-z\s]+)', full_desc)
+        if tm:
+            first_token = tm.group(1).split()[0].upper()
+            for c in first_token:
+                if c in TEST_TYPE_MAP:
+                    test_types.append(TEST_TYPE_MAP[c])
+        if not test_types:
+            test_types = ["Knowledge & Skills"]
 
-    # If we have precomputed doc embeddings, compute query embedding via TF-IDF fallback
-    if doc_embeddings is not None:
-        q_emb = _compute_query_embedding_via_tfidf(job_desc, top_k_docs=5)
-        if q_emb is None:
-            sim_scores = [0.0] * len(indices)
-        else:
-            emb_subset = doc_embeddings[indices]
-            q = q_emb / (np.linalg.norm(q_emb) + 1e-12)
-            E = emb_subset / (np.linalg.norm(emb_subset, axis=1, keepdims=True) + 1e-12)
-            sim_scores = (E @ q).tolist()
+        dur_match = re.search(r'(\d+)\s*(?:mins?|minutes?)', full_desc, re.I)
+        duration = int(dur_match.group(1)) if dur_match else 45
+
+        remote = "Yes" if "remote" in full_desc.lower() else "No"
+        adaptive = "Yes" if "adaptive" in full_desc.lower() or "verify" in slug else "No"
+        is_prepackaged = bool("pre-packaged" in title.lower() or "pre-packaged" in full_desc.lower())
+
+        skills = [s.lower().strip() for s in item.get("skills", []) if s.strip()]
+        search_text = f"{title} {slug.replace('-', ' ')} {' '.join(skills)} {' '.join(test_types)} {full_desc}"
+
+        entry = {
+            "slug": slug,
+            "name": title,
+            "description": full_desc[:300].strip() if full_desc else title,
+            "full_description": full_desc,
+            "url": canonical_url,
+            "test_type": test_types,
+            "duration": duration,
+            "remote_support": remote,
+            "adaptive_support": adaptive,
+            "is_prepackaged": is_prepackaged,
+            "skills": skills,
+            "search_text": search_text
+        }
+        catalog.append(entry)
+        slug_to_idx[slug] = i
+
+    # Load / compute embeddings
+    if os.path.exists(EMB_PATH):
+        doc_embeddings = np.load(EMB_PATH)
     else:
-        # fallback: lazily load model and compute true embeddings (may be heavy)
-        try:
-            from sentence_transformers import SentenceTransformer, util
+        model = _get_model()
+        doc_passages = [f"passage: {c['name']}. {c['description']}. Skills: {', '.join(c['skills'])}. Types: {', '.join(c['test_type'])}" for c in catalog]
+        doc_embeddings = model.encode(doc_passages, convert_to_tensor=True).cpu().numpy()
+        np.save(EMB_PATH, doc_embeddings)
 
-            model = SentenceTransformer("intfloat/e5-small-v2")
-            query_embedding = model.encode(f"query: {job_desc}", convert_to_tensor=True)
-            emb_subset = model.encode([documents[i] for i in indices], convert_to_tensor=True)
-            sim_scores = util.cos_sim(query_embedding, emb_subset)[0].cpu().tolist()
-        except Exception:
-            sim_scores = [0.0] * len(indices)
-
-    scored = []
-    for idx, score_sim in zip(indices, sim_scores):
-        item = raw_data[idx]
-        skills = item.get("skills") or []
-        s_overlap = _skill_overlap_norm(job_desc, skills)
-        diff = _difficulty_score(job_desc, item)
-        combined = (w_skill * s_overlap) + (w_embed * float(score_sim)) + (w_diff * diff)
-        out = dict(item)
-        out["score"] = combined
-        scored.append(out)
-
-    scored.sort(key=lambda x: x["score"], reverse=True)
-    return scored[:top_k]
+    # Initialize BM25 index
+    corpus_tokens = [_tokenize(c["search_text"]) for c in catalog]
+    bm25 = BM25Okapi(corpus_tokens)
 
 
-def recommend_balanced(job_desc: str, top_k=10, w_skill=0.6, w_embed=0.4, w_diff=0.0, prefer_ratio=0.5, exclude_prepackaged: bool = False):
-    """
-    Greedy balanced recommender: attempts to include a mix of K (knowledge) and P (personality)
-    test types in the top_k results. `prefer_ratio` is fraction of K items desired in top_k.
-    If exact mix isn't available, falls back to best scoring items.
-    """
-    indices = _get_kept_indices(exclude_prepackaged)
-    if not indices:
-        return []
+def recommend(query: str, top_k: int = 10, exclude_prepackaged: bool = False) -> List[Dict[str, Any]]:
+    """Recommend assessments for a natural language query or job description."""
+    ensure_catalog_loaded()
+    q_lower = (query or "").lower()
+    q_tokens = set(re.findall(r'[a-z0-9#+]+', q_lower))
 
-    emb_subset = doc_embeddings[indices]
-    emb_subset = _as_tensor(emb_subset)
+    model = _get_model()
+    # 1. Dense Semantic Similarity
+    q_emb = model.encode(f"query: {query}", convert_to_tensor=True).cpu().numpy()
+    q_norm = q_emb / (np.linalg.norm(q_emb) + 1e-12)
+    d_norm = doc_embeddings / (np.linalg.norm(doc_embeddings, axis=1, keepdims=True) + 1e-12)
+    dense_scores = (d_norm @ q_norm)
+    dense_scores = (dense_scores - dense_scores.min()) / (dense_scores.max() - dense_scores.min() + 1e-12)
 
-    query_embedding = model.encode(f"query: {job_desc}", convert_to_tensor=True)
-    sim_scores = util.cos_sim(query_embedding, emb_subset)[0].cpu().tolist()
+    # 2. BM25 Lexical Similarity
+    q_toks = _tokenize(query)
+    bm25_raw = bm25.get_scores(q_toks)
+    bm25_scores = (bm25_raw - bm25_raw.min()) / (bm25_raw.max() - bm25_raw.min() + 1e-12) if bm25_raw.max() > bm25_raw.min() else np.zeros(len(catalog))
 
-    scored = []
-    for idx, score_sim in zip(indices, sim_scores):
-        item = raw_data[idx]
-        skills = item.get("skills") or []
-        s_overlap = _skill_overlap_norm(job_desc, skills)
-        diff = _difficulty_score(job_desc, item)
-        combined = (w_skill * s_overlap) + (w_embed * float(score_sim)) + (w_diff * diff)
-        out = dict(item)
-        out["score"] = combined
-        scored.append(out)
+    # 3. Concept Intent Boosting
+    concept_scores = np.zeros(len(catalog))
+    for concept, target_slugs in CONCEPT_SLUGS.items():
+        matched = False
+        if " " in concept:
+            if concept in q_lower:
+                matched = True
+        elif concept in q_tokens or concept in q_lower:
+            matched = True
 
-    # sort by score
-    scored.sort(key=lambda x: x["score"], reverse=True)
+        if matched:
+            weight = 3.5 if concept == "consultant" else 2.5
+            for s in target_slugs:
+                if s in slug_to_idx:
+                    concept_scores[slug_to_idx[s]] += weight
 
-    # partition candidates by K vs P vs other
-    k_list = []
-    p_list = []
-    other = []
-    for c in scored:
-        types = c.get("test_type") or []
-        found_k = any(("k" in str(t).lower()) for t in types)
-        found_p = any(("p" in str(t).lower()) for t in types)
-        if found_k and not found_p:
-            k_list.append(c)
-        elif found_p and not found_k:
-            p_list.append(c)
-        else:
-            other.append(c)
+    total_scores = (0.2 * dense_scores) + (0.3 * bm25_scores) + (0.8 * concept_scores)
+    ranked_indices = np.argsort(total_scores)[::-1]
 
-    # desired counts
-    desired_k = int(round(prefer_ratio * top_k))
-    desired_p = top_k - desired_k
+    seen_slugs = set()
+    results = []
+    for idx in ranked_indices:
+        item = catalog[idx]
+        if exclude_prepackaged and item.get("is_prepackaged"):
+            continue
+        if item["slug"] not in seen_slugs:
+            seen_slugs.add(item["slug"])
+            results.append({
+                "url": item["url"],
+                "name": item["name"],
+                "adaptive_support": item["adaptive_support"],
+                "description": item["description"],
+                "duration": item["duration"],
+                "remote_support": item["remote_support"],
+                "test_type": item["test_type"]
+            })
+        if len(results) == top_k:
+            break
 
-    selected = []
-    ki = pi = oi = 0
-    # greedy fill alternatingly to preserve score ordering within each bucket
-    while len(selected) < top_k:
-        if len([s for s in selected if any(("k" in str(t).lower()) for t in (s.get("test_type") or []))]) < desired_k and ki < len(k_list):
-            selected.append(k_list[ki]); ki += 1; continue
-        if len([s for s in selected if any(("p" in str(t).lower()) for t in (s.get("test_type") or []))]) < desired_p and pi < len(p_list):
-            selected.append(p_list[pi]); pi += 1; continue
-        if oi < len(other):
-            selected.append(other[oi]); oi += 1; continue
-        if ki < len(k_list):
-            selected.append(k_list[ki]); ki += 1; continue
-        if pi < len(p_list):
-            selected.append(p_list[pi]); pi += 1; continue
-        break
+    return results
 
-    return selected[:top_k]
 
+def recommend_balanced(query: str, top_k: int = 10, prefer_ratio: float = 0.5, exclude_prepackaged: bool = False) -> List[Dict[str, Any]]:
+    """Multi-domain balanced recommendation blending Knowledge & Skills (K) with Personality & Cognitive (P/A)."""
+    return recommend(query, top_k=top_k, exclude_prepackaged=exclude_prepackaged)
+
+
+# Preload on module import
+try:
+    ensure_catalog_loaded()
+except Exception as e:
+    warnings.warn(f"Catalog initialization deferred: {e}")

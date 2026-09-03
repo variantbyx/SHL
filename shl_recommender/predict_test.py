@@ -1,44 +1,52 @@
-import json
-import csv
+"""
+Generate submission predictions for the test dataset in strict Appendix 3 format.
+Output CSV format:
+Query,Assessment_url
+Query 1,https://www.shl.com/solutions/products/product-catalog/view/...
+Query 1,https://www.shl.com/solutions/products/product-catalog/view/...
+...
+"""
+
 import os
+import csv
+import pandas as pd
+from recommender import recommend, ensure_catalog_loaded
 
-try:
-    from recommender import recommend
-except Exception as e:
-    print("Error importing recommend():", e)
-    raise
+ROOT_DIR = os.path.dirname(__file__)
+DATA_DIR = os.path.join(ROOT_DIR, "data")
+EXCEL_PATH = os.path.join(DATA_DIR, "dataset.xlsx")
+SUBMISSION_CSV_PATH = os.path.join(ROOT_DIR, "submission.csv")
 
-data_dir = os.path.join(os.path.dirname(__file__), "data")
-test_path = os.path.join(data_dir, "test.json")
-out_json = os.path.join(data_dir, "test_predictions.json")
-out_csv = os.path.join(data_dir, "test_predictions.csv")
 
-with open(test_path, "r", encoding="utf8") as f:
-    tests = json.load(f)
+def generate_test_predictions(excel_path: str = EXCEL_PATH, out_csv: str = SUBMISSION_CSV_PATH, top_k: int = 10):
+    ensure_catalog_loaded()
 
-out = []
-for i, item in enumerate(tests):
-    q = item.get("query")
-    preds = recommend(q, top_k=10)
-    preds_out = []
-    for p in preds[:5]:
-        name = p.get("name") or p.get("description") or p.get("title") or ""
-        url = p.get("url") or p.get("link") or ""
-        score = p.get("score") if isinstance(p, dict) else None
-        aid = p.get('assessment_id')
-        if not aid and url:
-            aid = url.rstrip('/').split('/')[-1]
-        preds_out.append({"assessment_id": aid, "name": name, "url": url, "score": score})
-    out.append({"query": q, "predictions": preds_out})
+    if not os.path.exists(excel_path):
+        raise FileNotFoundError(f"Dataset not found at {excel_path}")
 
-with open(out_json, "w", encoding="utf8") as f:
-    json.dump(out, f, indent=2, ensure_ascii=False)
+    df_test = pd.read_excel(excel_path, sheet_name="Test-Set")
+    queries = df_test["Query"].dropna().tolist()
 
-with open(out_csv, "w", newline='', encoding="utf8") as csvfile:
-    writer = csv.writer(csvfile)
-    writer.writerow(["query_index", "query", "rank", "assessment_name", "assessment_url", "score"])
-    for idx, row in enumerate(out):
-        for r, p in enumerate(row["predictions"], start=1):
-            writer.writerow([idx, row["query"], r, p["assessment_id"], p["name"], p["url"], p["score"]])
+    print(f"\nGenerating predictions for {len(queries)} test queries...")
 
-print("Wrote predictions to", out_json, "and", out_csv)
+    rows = []
+    for idx, query in enumerate(queries, 1):
+        preds = recommend(query, top_k=top_k)
+        for p in preds:
+            rows.append({
+                "Query": query,
+                "Assessment_url": p["url"]
+            })
+        print(f"[{idx}/{len(queries)}] Generated {len(preds)} recommendations for: {query[:50]}...")
+
+    # Write strictly formatted CSV
+    with open(out_csv, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["Query", "Assessment_url"])
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(f"\nSuccessfully wrote {len(rows)} prediction rows to {out_csv}")
+
+
+if __name__ == "__main__":
+    generate_test_predictions()

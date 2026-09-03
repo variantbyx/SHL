@@ -12,6 +12,7 @@ import {
 
 type Assessment = {
   url: string;
+  name?: string;
   adaptive_support: string;
   description: string;
   duration: number | null;
@@ -23,7 +24,12 @@ type RecommendationResponse = {
   recommended_assessments: Assessment[];
 };
 
+const getAssessmentUrl = (a: Assessment) => {
+  return a.url || "https://www.shl.com/solutions/products/product-catalog/";
+};
+
 export default function Recommender() {
+
   const [query, setQuery] = useState<string>(
     "Looking to hire someone skilled in Python, SQL, and JavaScript"
   );
@@ -69,7 +75,7 @@ export default function Recommender() {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ job_description: query, url: urlInput, top_k: topK }),
+          body: JSON.stringify({ query: query, job_description: query, url: urlInput, top_k: topK }),
           signal: controller.signal,
         });
         clearTimeout(timeoutId);
@@ -240,8 +246,8 @@ export default function Recommender() {
                 className="bg-white rounded-xl shadow-md p-5 hover:shadow-lg transition"
               >
                 <h4 className="text-md font-semibold text-gray-700 mb-2 hover:underline">
-                  <a href={a.url} target="_blank" rel="noopener noreferrer">
-                    {a.description}
+                  <a href={getAssessmentUrl(a)} target="_blank" rel="noopener noreferrer">
+                    {a.name || a.description}
                   </a>
                 </h4>
                 <div className="flex flex-wrap gap-2 text-xs">
@@ -262,7 +268,7 @@ export default function Recommender() {
                 </div>
                 <div className="mt-4">
                   <a
-                    href={a.url}
+                    href={getAssessmentUrl(a)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-block text-sm text-white bg-orange-600 hover:bg-orange-700 px-3 py-1 rounded-md"
